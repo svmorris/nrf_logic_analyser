@@ -9,14 +9,20 @@
 #include <zephyr/toolchain.h>
 #include <zephyr/devicetree.h>
 
+#include <zephyr/sys/util.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/sys/util_macro.h>
 #include <zephyr/sys/time_units.h>
 
 #include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/counter.h>
 
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_core.h>
+
+#include "th_ringbuffer.h"
 
 LOG_MODULE_REGISTER(TH_1_LOGIC, LOG_LEVEL_INF);
 
@@ -25,7 +31,19 @@ LOG_MODULE_REGISTER(TH_1_LOGIC, LOG_LEVEL_INF);
 static const struct device *report_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
 static const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(uart1));
 
+// 1Mhz timer
+static const struct device *const counter_dev = DEVICE_DT_GET(DT_NODELABEL(timer3));
 
+// inputs
+#define USER_NODE DT_PATH(zephyr_user)
+static const struct gpio_dt_spec inputs[] = {
+    GPIO_DT_SPEC_GET_BY_IDX(USER_NODE, input_gpios, 0),
+    GPIO_DT_SPEC_GET_BY_IDX(USER_NODE, input_gpios, 1),
+    GPIO_DT_SPEC_GET_BY_IDX(USER_NODE, input_gpios, 2),
+    GPIO_DT_SPEC_GET_BY_IDX(USER_NODE, input_gpios, 3),
+};
+#define INPUT_PINS_MASK (BIT(inputs[0].pin) | BIT(inputs[1].pin) |  BIT(inputs[2].pin) | BIT(inputs[3].pin))
+gpio_port_value_t input_port;
 
 // DMA command buffer is only 1 byte so it can
 // trigger an interrupt as soon as it receives
@@ -40,16 +58,15 @@ static volatile uint8_t c_buf_index = 0;
 static volatile uint8_t long_command_buf[LONG_COMMAND_BUF_LEN];
 
 
-// true only when the capture is already running
-static volatile bool capture_running = false;
-static volatile bool simulate_running = false;
-
+bool record_complete = false;
 
 
 void check_respond_command(char command_byte);
 void write_uart(uint8_t *msg, size_t len, const struct device *dev);
 void write_uart_log(uint8_t *msg, size_t len, const struct device *dev);
 static void dev_command_cb(const struct device *cb_dev, struct uart_event *evt, void *unused1);
+
+static void counter_1mhz_isr(const struct device *unused1, void *unused2);
 
 
 
@@ -83,19 +100,54 @@ int main()
 
     LOG_INF("System Initialised!");
 
+
+    if (!(err = device_is_ready(counter_dev)))
+    {
+        LOG_ERR("Counter device is not ready! (err: %d)", err);
+        return -1;
+    }
+    struct counter_top_cfg top_cfg = {
+        .ticks = 1,
+        .callback = counter_1mhz_isr,
+        .user_data = NULL,
+        .flags = COUNTER_TOP_CFG_RESET_WHEN_LATE
+    };
+
+    counter_set_top_value(counter_dev, &top_cfg);
+    LOG_INF("Counter initialised!");
+
+
+    for (int i = 0; i < ARRAY_SIZE(inputs); i++)
+    {
+        if (!(err = gpio_is_ready_dt(&inputs[i])))
+        {
+            LOG_ERR("Input GPIO pin %d is not ready! (err: %d)", i, err);
+            return -1;
+        }
+
+        if ((err = gpio_pin_configure_dt(&inputs[i], GPIO_INPUT)) != 0)
+        {
+            LOG_ERR("Failed to configure GPIO pin %d! (err: %d)", i, err);
+            return err;
+        }
+    }
+    LOG_INF("All pins initialised!");
+
+
     while (1)
     {
-        if (capture_running)
+        if (record_complete)
         {
-
-            write_uart((uint8_t[]){'\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00' }, 96, dev);// , '\0', '\0', '\0'}, 4, dev);
-            capture_running = false;
+            uint8_t recorded_buf[100];
+            ring_buffer_read(recorded_buf, 96);
+            record_complete = false;
         }
         else
         {
-            k_sleep(K_SECONDS(1));
+            k_msleep(100);
         }
     }
+
 }
 
 
@@ -127,8 +179,15 @@ void check_respond_command(char command_byte)
         case 0x00:
             // Rebooting takes too long. Just need to
             // reset all variables here.
-            capture_running = false;
+            counter_stop(counter_dev);
+            ring_buffer_clear();
+            record_complete = false;
             goto RESET_CMD_BUF;
+
+        case 0x01:
+            counter_start(counter_dev);
+            goto RESET_CMD_BUF;
+
         case 0x02:
             write_uart_log((uint8_t[]){'1', 'A', 'L', 'S'}, 4, dev);
             goto RESET_CMD_BUF;
@@ -143,9 +202,6 @@ void check_respond_command(char command_byte)
             }, 25, dev);
             goto RESET_CMD_BUF;
 
-        case 0x01:
-            capture_running = true;
-            goto RESET_CMD_BUF;
 
         case 0x05:
         case 0x06:
@@ -198,3 +254,19 @@ void write_uart_log(uint8_t *msg, size_t len, const struct device *tdev)
     LOG_HEXDUMP_INF((uint8_t*)msg, len, "Replied with:");
 }
 
+
+static void counter_1mhz_isr(const struct device *unused1, void *unused2)
+{
+    ARG_UNUSED(unused1);
+    ARG_UNUSED(unused2);
+
+    // tmp since we just hard record only 96 atm
+    if (ringbuffer_index > 96)
+    {
+        record_complete = true;
+        counter_stop(counter_dev);
+    }
+
+    gpio_port_get_raw(inputs[0].port, &input_port);
+    ring_buffer_write_one(((uint8_t)(input_port & INPUT_PINS_MASK)));
+}

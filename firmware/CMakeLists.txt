@@ -6,4 +6,5 @@ project(NRF_LOGIC)
 
 target_sources(app PRIVATE
     src/main.c
+    src/th_ringbuffer.c
 )

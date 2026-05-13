@@ -3,6 +3,13 @@
         zephyr,console    = &uart0;
         zephyr,shell-uart = &uart0;
     };
+
+    zephyr,user {
+        input-gpios = <&gpio0 7 (GPIO_ACTIVE_HIGH)>,
+                      <&gpio0 8 (GPIO_ACTIVE_HIGH)>,
+                      <&gpio0 9 (GPIO_ACTIVE_HIGH)>,
+                      <&gpio0 10 (GPIO_ACTIVE_HIGH)>;
+    };
 };
 
 &pinctrl {
@@ -48,5 +55,5 @@
 &timer3 {
     status = "okay";
     prescaler = <4>; // 16Mhz / 2^4 = 1MHZ or 1 us;
-
+    interrupts = <26 2>; // I want this to be only preemtible by UART1
 };
