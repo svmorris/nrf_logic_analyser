@@ -8,7 +8,7 @@ then arms the trigger with 0x01. Prints all received bytes as hex.
 import serial
 import time
 
-PORT     = "/dev/ttyUSB1"
+PORT     = "/dev/ttyUSB0"
 BAUD     = 115200          # standard SUMP default; change if your device differs
 TIMEOUT  = 2.0             # seconds to wait for each response
 ARM_DELAY = 1.0            # seconds to wait before sending ARM (0x01)

@@ -87,21 +87,12 @@ int main()
     {
         if (capture_running)
         {
-            k_msleep(100);
-            for (int i = 0; i < 100; i++)
-            {
-                // something does not work with sending the commands
-                // but the configuration works
-                k_msleep(100);
-                write_uart((uint8_t[]){'\x02', '\0', '\0', '\0'}, 4, dev);
-                k_msleep(100);
-                write_uart((uint8_t[]){'\x00', '\0', '\0', '\0'}, 4, dev);
-            }
+
+            write_uart((uint8_t[]){'\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00', '\x01', '\x00' }, 96, dev);// , '\0', '\0', '\0'}, 4, dev);
             capture_running = false;
         }
         else
         {
-            printk("nocap\n");
             k_sleep(K_SECONDS(1));
         }
     }
@@ -139,15 +130,10 @@ void check_respond_command(char command_byte)
             capture_running = false;
             goto RESET_CMD_BUF;
         case 0x02:
-            /* write_uart_log((uint8_t[]){'1', 'S', 'L', 'O'}, 4, dev); */
             write_uart_log((uint8_t[]){'1', 'A', 'L', 'S'}, 4, dev);
             goto RESET_CMD_BUF;
 
         case 0x04:
-            /* write_uart_log((uint8_t[]){ */
-            /*     0x01, 'T', 'H', '-', '1', '-', 'L', 'O', 'G', 'I', 'C', */
-            /*     0x00, 0x40, 0x04, 0x00 */
-            /* }, 15, dev); */
             write_uart_log((uint8_t[]){
                 0x01, 'T', 'H', '-', '1', '-', 'L', 'O', 'G', 'I', 'C', 0x00,
                 0x23, 0x00, 0x00, 0x00, 0x64,
@@ -181,7 +167,7 @@ void check_respond_command(char command_byte)
         case 0x80:
         case 0x81:
         case 0x82:
-            LOG_WRN("Unimplemented long command! (c=%d)", command_buf[0]);
+            /* LOG_WRN("Unimplemented long command! (c=%02x)", command_buf[0]); */
             if (c_buf_index == 5)
                 goto RESET_CMD_BUF;
             break;
